@@ -4,6 +4,22 @@ A powerful Python-based desktop application that displays **live Indian stock ma
 
 ---
 
+## 📸 Screenshots
+
+### Stock List
+
+![Stock List](images/stock-list.png)
+
+### Stock Chart
+
+![Stock Chart](images/stock-chart.png)
+
+### Fundamentals
+
+![Fundamentals](images/fundamentals.png)
+
+---
+
 ## 🚀 Features
 
 * 📃 Top 100 Indian Stocks (NSE)
