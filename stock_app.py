@@ -5,6 +5,8 @@ import yfinance as yf
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import mplcursors
+import time
+from datetime import datetime, timedelta
 
 TOP_100_STOCKS = [
     "RELIANCE.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
@@ -61,6 +63,12 @@ class LiveStockApp:
 
         self.progress = ttk.Progressbar(self.stock_tab, mode="indeterminate", length=300)
         self.progress.pack(pady=10)
+
+        # Simple in-memory cache for yfinance calls (symbol -> (timestamp, data))
+        self._cache = {
+            'info': {},
+            'history': {}
+        }
 
         self.root.after(100, self.fetch_stock_data_threaded)
         self.root.mainloop()
@@ -126,14 +134,14 @@ class LiveStockApp:
 
         for index, stock in enumerate(TOP_100_STOCKS, start=1):
             try:
-                ticker = yf.Ticker(stock)
-                price_data = ticker.history(period='1d')
-                if price_data.empty:
+                # Use cached history and info to reduce repeated network calls
+                price_data = self.get_history_cached(stock, period='1d')
+                if price_data is None or price_data.empty:
                     continue
                 price = price_data['Close'].iloc[-1]
                 open_price = price_data['Open'].iloc[0]
-                info = ticker.info
-                market_cap = info.get("marketCap", 0)
+                info = self.get_info_cached(stock)
+                market_cap = info.get("marketCap", 0) if isinstance(info, dict) else 0
 
                 if not (min_price <= price <= max_price):
                     continue
@@ -148,6 +156,52 @@ class LiveStockApp:
             except Exception as e:
                 print(f"Error fetching {stock}: {e}")
         self.progress.stop()
+
+    def _with_retries(self, func, *args, retries=3, backoff=1, **kwargs):
+        last_exc = None
+        for attempt in range(1, retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                last_exc = e
+                time.sleep(backoff * attempt)
+        raise last_exc
+
+    def get_history_cached(self, symbol, period='1d', interval=None, ttl_seconds=60):
+        key = f"{symbol}|{period}|{interval}"
+        entry = self._cache['history'].get(key)
+        now = datetime.utcnow()
+        if entry:
+            ts, data = entry
+            if now - ts < timedelta(seconds=ttl_seconds):
+                return data
+        def _fetch():
+            ticker = yf.Ticker(symbol)
+            # prefer interval when provided
+            if interval:
+                return ticker.history(period=period, interval=interval)
+            return ticker.history(period=period)
+
+        data = self._with_retries(_fetch)
+        self._cache['history'][key] = (now, data)
+        return data
+
+    def get_info_cached(self, symbol, ttl_seconds=60):
+        entry = self._cache['info'].get(symbol)
+        now = datetime.utcnow()
+        if entry:
+            ts, data = entry
+            if now - ts < timedelta(seconds=ttl_seconds):
+                return data
+        def _fetch():
+            ticker = yf.Ticker(symbol)
+            return ticker.info or {}
+
+        info = self._with_retries(_fetch)
+        # ensure a dict
+        info = info if isinstance(info, dict) else {}
+        self._cache['info'][symbol] = (now, info)
+        return info
 
     def on_stock_select(self, event):
         selected_item = self.tree.selection()
